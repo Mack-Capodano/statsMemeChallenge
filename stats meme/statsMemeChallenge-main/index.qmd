@@ -1,0 +1,162 @@
+---
+title: "Selection Bias & Missing Data Challenge - Part 2"
+subtitle: "Creating a Statistics Meme: Visualizing Selection Bias"
+format:
+  html: default
+execute:
+  echo: true
+  eval: true
+---
+
+<!--
+All introductory and instructional text has been commented out.
+The HTML will now show only the 4-panel meme and your custom explanation.
+-->
+
+```{python}
+#| echo: false
+#| output: false
+#| message: false
+#| warning: false
+
+
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+
+# Load original image
+original_img = Image.open('maye.jpeg')
+if original_img.mode != 'L':
+    original_img = original_img.convert('L')
+original_array = np.array(original_img, dtype=np.float32) / 255.0
+
+# Load stippled image (from Part 1 - see
+stipple_img = Image.open('just_stippling.png')
+if stipple_img.mode != 'L':
+    stipple_img = stipple_img.convert('L')
+stipple_array = np.array(stipple_img, dtype=np.float32) / 255.0
+
+# Resize images to match dimensions (use original image size as target)
+target_height, target_width = original_array.shape
+if stipple_array.shape != (target_height, target_width):
+    print(f"Resizing stipple from {stipple_array.shape} to {(target_height, target_width)}")
+    stipple_pil = Image.fromarray((stipple_array * 255).astype(np.uint8), mode='L')
+    stipple_resized = stipple_pil.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    stipple_array = np.array(stipple_resized, dtype=np.float32) / 255.0
+
+print(f"Final dimensions - Original: {original_array.shape}, Stipple: {stipple_array.shape}")
+
+# Create the S matrix using PIL text rendering (following the provided code)
+from PIL import ImageDraw, ImageFont
+def load_font(height):
+    font_size = int(height * 0.98)  # ~98% of image height
+    try:
+        # Try different font paths for bold fonts
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
+            "/System/Library/Fonts/Arial Bold.ttf",                  # macOS
+            "/Library/Fonts/Arial Bold.ttf",                        # Alternative macOS
+            "C:/Windows/Fonts/arialbd.ttf",                         # Windows
+        ]
+        for font_path in font_paths:
+            try:
+                return ImageFont.truetype(font_path, font_size)
+            except:
+                continue
+        raise Exception("No bold font found")
+    except Exception:
+        print("Could not load bold font, falling back to default.")
+        return ImageFont.load_default()
+
+def make_S_mask(width, height):
+    # White background (255)
+    img = Image.new("L", (width, height), color=255)
+    draw = ImageDraw.Draw(img)
+
+    font = load_font(height)
+
+    # Get text bounding box to center it
+    text_bbox = draw.textbbox((0, 0), "S", font=font)
+    text_w = text_bbox[2] - text_bbox[0]
+    text_h = text_bbox[3] - text_bbox[1]
+
+    x = (width - text_w) // 2
+
+    # negative offset moves the S *up*; tweak 0.05–0.15 to taste
+    vertical_offset = -int(0.15 * height)
+
+    y = (height - text_h) // 2 + vertical_offset
+
+    # Draw black "S" (0)
+    draw.text((x, y), "S", font=font, fill=0)
+
+    # Convert to numpy in [0,1]: 0.0 = black (S), 1.0 = white (background)
+    arr = np.array(img, dtype=np.float32) / 255.0
+    return img, arr
+
+# Create the S matrix
+height, width = original_array.shape
+s_img, s_array = make_S_mask(width, height)
+
+print(f"S matrix created: {s_array.shape}")
+print(f"S pixel range: {s_array.min():.3f} to {s_array.max():.3f}")
+print(f"S has {(s_array < 0.5).sum()} black pixels out of {s_array.size} total ({100*(s_array < 0.5).sum()/s_array.size:.1f}%)")
+
+# Threshold Tuning: Adjust threshold (typically 0.5) for clean mask edges
+# (This will be used later when applying the mask)
+
+# Create the masked estimate by applying selection bias
+# Where S is black (< 0.5), remove stipple points by setting to white (1.0)
+# Where S is white (>= 0.5), keep original stipple values
+selection_mask = s_array < 0.5  # True where selection bias occurs (S is black)
+estimate_array = np.where(selection_mask, 1.0, stipple_array)
+
+print(f"Masked estimate created: {estimate_array.shape}")
+print(f"Original stipple points: {(stipple_array < 0.5).sum()}")
+print(f"Remaining stipple points after masking: {(estimate_array < 0.5).sum()}")
+print(f"Points removed by selection bias: {(stipple_array < 0.5).sum() - (estimate_array < 0.5).sum()}")
+
+# Create the four-panel statistics meme
+fig, axes = plt.subplots(
+    2, 2, figsize=(12, 10),
+    gridspec_kw={'wspace': -0.65, 'hspace': 0.1}
+)
+
+plt.subplots_adjust(left=0.03, right=0.97)
+
+
+fig.patch.set_facecolor('#FFB6C1')  # Light pink background
+
+# Panel 1: Reality
+axes[0, 0].imshow(original_array, cmap='gray', aspect='equal')
+axes[0, 0].set_title('Reality', fontsize=16, fontweight='bold')
+axes[0, 0].axis('off')
+
+# Panel 2: Your Model
+axes[0, 1].imshow(stipple_array, cmap='gray', aspect='equal')
+axes[0, 1].set_title('Your Model', fontsize=16, fontweight='bold')
+axes[0, 1].axis('off')
+
+# Panel 3: Selection Bias
+axes[1, 0].imshow(s_array, cmap='gray', aspect='equal')
+axes[1, 0].set_title('Selection Bias', fontsize=16, fontweight='bold', pad=10)
+axes[1, 0].axis('off')
+
+# Panel 4: Estimate
+axes[1, 1].imshow(estimate_array, cmap='gray', aspect='equal')
+axes[1, 1].set_title('Estimate', fontsize=16, fontweight='bold', pad=10)
+axes[1, 1].axis('off')
+
+# Save the meme
+plt.savefig('statistics_meme.png', dpi=300, bbox_inches='tight', facecolor='#FFB6C1')
+plt.show()
+
+print("Four-panel statistics meme created and saved as 'statistics_meme.png'")
+```
+
+<!-- Display the final meme -->
+![Four-panel Statistics Meme: Reality, Your Model, Selection Bias, Estimate](statistics_meme.png)
+
+<!-- Add your explanatory text below -->
+
+Selection bias happens when the data observed systematically differs from the true population, causing the model to see an incomplete or distorted version of reality. In my meme, the bold **S** represents the missing data pattern that leads the stippled model away from the true image.
